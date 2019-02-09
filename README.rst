@@ -37,4 +37,6 @@ so that you don't have to re-build the image too often::
 
     ./run --arch resnet34 --workers 4
 
-
+All runs are recorded into ``./mlruns`` folder, you can use ``./mlflow-ui``
+to monitor them (use ``./mlflow-ui --host 0.0.0.0`` to expose it).
+Note that 5000 port is hardcoded in ``./mlflow-ui``.

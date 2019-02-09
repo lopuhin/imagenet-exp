@@ -1,5 +1,6 @@
+mlflow==0.8.2
 numpy==1.16.1
-torch==1.0.1
 pillow==5.3.0
+# torch==1.0.1
 torchvision==0.2.1
 tqdm==4.31.0

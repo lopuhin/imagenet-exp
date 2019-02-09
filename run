@@ -3,5 +3,7 @@
 nvidia-docker run --rm -it \
     --shm-size 8G \
     -v `pwd`/data:/data \
+    -v `pwd`/mlruns:/imagenet/mlruns \
     -v `pwd`/imagenet:/imagenet/imagenet \
+    -v `pwd`/.git:/imagenet/.git \
     imagenet python3 ./imagenet/main.py /data $*

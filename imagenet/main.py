@@ -6,6 +6,8 @@ import time
 from pathlib import Path
 import warnings
 
+import mlflow
+import numpy as np
 import torch
 from torch import nn
 from torch.backends import cudnn
@@ -23,6 +25,8 @@ def main():
     parser = argparse.ArgumentParser(description='PyTorch ImageNet Training')
     arg = parser.add_argument
     arg('data', help='path to dataset')
+    arg('--name', help='mlflow run name')
+    arg('--exp-name', default='default', help='mlflow experiment name')
     arg('--arch', default='resnet18',
         choices=model_names,
         help='model architecture: ' +
@@ -43,14 +47,22 @@ def main():
     arg('--momentum', default=0.9, type=float, help='momentum')
     arg('--weight-decay', default=1e-4, type=float,
         help='weight decay (default: %(default)s)')
-    arg('--resume', default='', type=str,
-        help='path to latest checkpoint (default: %(default)s)')
-    arg('--evaluate', dest='evaluate', action='store_true',
+    arg('--resume', help='path to latest checkpoint')
+    arg('--evaluate', action='store_true',
         help='evaluate model on validation set')
     arg('--pretrained', action='store_true', help='use pre-trained model')
-    arg('--seed', default=None, type=int, help='seed for initializing training')
-    arg('--gpu', default=None, type=int, help='GPU id to use')
+    arg('--seed', type=int, help='seed for initializing training')
+    arg('--gpu', type=int, help='GPU id to use')
+    arg('--train-limit', type=int, help='limit train dataset size')
+    arg('--valid-limit', type=int, help='limit valid dataset size')
     args = parser.parse_args()
+
+    params = vars(args)
+    run_name = params.pop('name')
+    mlflow.set_experiment(experiment_name=args.exp_name)
+    mlflow.start_run(run_name=run_name)
+    for k, v in params.items():
+        mlflow.log_param(k, v)
 
     if args.seed is not None:
         random.seed(args.seed)
@@ -103,19 +115,20 @@ def main():
     cudnn.benchmark = True
 
     data_root = Path(args.data)
-    traindir = data_root / 'train'
-    valdir = data_root / 'val'
+    train_dir = data_root / 'train'
+    valid_dir = data_root / 'val'
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
 
     train_dataset = datasets.ImageFolder(
-        traindir,
+        train_dir,
         transforms.Compose([
             transforms.RandomResizedCrop(224),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
         ]))
+    sample_imagefolder(train_dataset, args.train_limit)
 
     train_loader = DataLoader(
         train_dataset,
@@ -125,13 +138,17 @@ def main():
         pin_memory=True,
     )
 
-    val_loader = DataLoader(
-        datasets.ImageFolder(valdir, transforms.Compose([
+    valid_dataset = datasets.ImageFolder(
+        valid_dir, transforms.Compose([
             transforms.Resize(256),
             transforms.CenterCrop(224),
             transforms.ToTensor(),
             normalize,
-        ])),
+        ]))
+    sample_imagefolder(valid_dataset, args.valid_limit)
+
+    valid_loader = DataLoader(
+        valid_dataset,
         batch_size=args.batch_size,
         shuffle=False,
         num_workers=args.workers,
@@ -139,21 +156,23 @@ def main():
     )
 
     if args.evaluate:
-        validate(val_loader, model, criterion, args)
+        validate(valid_loader, model, criterion, args)
         return
 
-    for epoch in tqdm.trange(args.start_epoch, args.epochs):
+    pbar = tqdm.trange(args.start_epoch, args.epochs)
+    for epoch in pbar:
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
         train(train_loader, model, criterion, optimizer, epoch, args)
 
         # evaluate on validation set
-        acc1 = validate(val_loader, model, criterion, args)
+        acc1 = validate(valid_loader, model, criterion, args)
 
         # remember best acc@1 and save checkpoint
         is_best = acc1 > best_acc1
         best_acc1 = max(acc1, best_acc1)
+        pbar.set_postfix({'acc1': f'{acc1:.3f}'})
 
         save_checkpoint({
             'epoch': epoch + 1,
@@ -176,7 +195,7 @@ def train(train_loader: DataLoader, model: nn.Module, criterion, optimizer,
 
     end = time.time()
     pbar = tqdm.tqdm(train_loader, desc=f'Epoch {epoch}')
-    for i, (input, target) in enumerate(pbar):
+    for input, target in pbar:
         # measure data loading time
         data_time.update(time.time() - end)
 
@@ -191,8 +210,8 @@ def train(train_loader: DataLoader, model: nn.Module, criterion, optimizer,
         # measure accuracy and record loss
         acc1, acc5 = accuracy(output, target, topk=(1, 5))
         losses.update(loss.item(), input.size(0))
-        top1.update(acc1[0], input.size(0))
-        top5.update(acc5[0], input.size(0))
+        top1.update(acc1[0].item(), input.size(0))
+        top5.update(acc5[0].item(), input.size(0))
 
         # compute gradient and do SGD step
         optimizer.zero_grad()
@@ -211,8 +230,12 @@ def train(train_loader: DataLoader, model: nn.Module, criterion, optimizer,
             'Acc@5': f'{top5.avg:.3f}',
         })
 
+    mlflow.log_metric('train_loss', losses.avg)
+    mlflow.log_metric('train_top1', top1.avg)
+    mlflow.log_metric('train_top5', top5.avg)
 
-def validate(val_loader, model, criterion, args):
+
+def validate(valid_loader, model, criterion, args):
     batch_time = AverageMeter()
     losses = AverageMeter()
     top1 = AverageMeter()
@@ -222,8 +245,8 @@ def validate(val_loader, model, criterion, args):
 
     with torch.no_grad():
         end = time.time()
-        pbar = tqdm.tqdm(val_loader, desc='Validation')
-        for i, (input, target) in enumerate(pbar):
+        pbar = tqdm.tqdm(valid_loader, desc='Validation')
+        for input, target in pbar:
             if args.gpu is not None:
                 input = input.cuda(args.gpu, non_blocking=True)
             target = target.cuda(args.gpu, non_blocking=True)
@@ -235,8 +258,8 @@ def validate(val_loader, model, criterion, args):
             # measure accuracy and record loss
             acc1, acc5 = accuracy(output, target, topk=(1, 5))
             losses.update(loss.item(), input.size(0))
-            top1.update(acc1[0], input.size(0))
-            top5.update(acc5[0], input.size(0))
+            top1.update(acc1[0].item(), input.size(0))
+            top5.update(acc5[0].item(), input.size(0))
 
             # measure elapsed time
             batch_time.update(time.time() - end)
@@ -249,12 +272,15 @@ def validate(val_loader, model, criterion, args):
                 'Acc@5': f'{top5.avg:.3f}',
             })
 
-        print(f' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}')
+    mlflow.log_metric('valid_loss', losses.avg)
+    mlflow.log_metric('valid_top1', top1.avg)
+    mlflow.log_metric('valid_top5', top5.avg)
 
     return top1.avg
 
 
 def save_checkpoint(state, is_best, filename='net.pth'):
+    # TODO make it an mlflow artifact
     torch.save(state, filename)
     if is_best:
         shutil.copyfile(filename, 'net-best.pth')
@@ -267,14 +293,14 @@ class AverageMeter(object):
         self.reset()
 
     def reset(self):
-        self.val = 0
+        self.value = 0
         self.avg = 0
         self.sum = 0
         self.count = 0
 
-    def update(self, val, n=1):
-        self.val = val
-        self.sum += val * n
+    def update(self, value, n=1):
+        self.value = value
+        self.sum += value * n
         self.count += n
         self.avg = self.sum / self.count
 
@@ -304,6 +330,14 @@ def accuracy(output, target, topk=(1,)):
             correct_k = correct[:k].view(-1).float().sum(0, keepdim=True)
             res.append(correct_k.mul_(100.0 / batch_size))
         return res
+
+
+def sample_imagefolder(dataset: datasets.ImageFolder, limit: int = None):
+    if limit and len(dataset) > limit:
+        rng = np.random.RandomState(42)
+        dataset.samples = [
+            dataset.samples[idx]
+            for idx in rng.choice(len(dataset.samples), limit, replace=False)]
 
 
 if __name__ == '__main__':
