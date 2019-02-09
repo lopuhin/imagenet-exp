@@ -8,8 +8,10 @@ import warnings
 
 import mlflow
 import numpy as np
+from PIL import Image
 import torch
 from torch import nn
+from torch.nn import functional as F
 from torch.backends import cudnn
 import torch.optim
 from torch.utils.data import DataLoader
@@ -32,6 +34,9 @@ def main():
         help='model architecture: ' +
              ' | '.join(model_names) +
              ' (default: %(default)s)')
+    arg('--input-size', default=224, type=int, help='input size for the network')
+    arg('--predict-size', default=256, type=int,
+        help='at test time, resize to that size, then crop to --input-size')
     arg('--workers', default=4, type=int,
         help='number of data loading workers (default: %(default)s)')
     arg('--epochs', default=90, type=int,
@@ -52,7 +57,10 @@ def main():
         help='evaluate model on validation set')
     arg('--pretrained', action='store_true', help='use pre-trained model')
     arg('--seed', type=int, help='seed for initializing training')
-    arg('--gpu', type=int, help='GPU id to use')
+    arg('--device', type=str, default='cuda',
+        help='device to use, "cuda" to use all GPUs, '
+             '"cuda:0" to use a specific GPU,'
+             '"cpu" to run on CPU.')
     arg('--train-limit', type=int, help='limit train dataset size')
     arg('--valid-limit', type=int, help='limit valid dataset size')
     args = parser.parse_args()
@@ -74,27 +82,18 @@ def main():
                       'You may see unexpected behavior when restarting '
                       'from checkpoints.')
 
-    if args.gpu is not None:
-        warnings.warn('You have chosen a specific GPU. This will completely '
-                      'disable data parallelism.')
-
     print(f'Using model {args.arch} pretrained={args.pretrained}')
-    model_cls = models.__dict__[args.arch]
-    model = model_cls(pretrained=args.pretrained)
+    model = create_model(args.arch)
 
-    if args.gpu is not None:
-        print('Use GPU: {args.gpu} for training')
-        torch.cuda.set_device(args.gpu)
-        model = model.cuda(args.gpu)
-    else:
+    if args.device == 'cuda':
         # DataParallel will divide and allocate batch_size to all available GPUs
         if args.arch.startswith('alexnet') or args.arch.startswith('vgg'):
             model.features = torch.nn.DataParallel(model.features)
-            model.cuda()
         else:
-            model = torch.nn.DataParallel(model).cuda()
+            model = torch.nn.DataParallel(model)
+    model.to(device=args.device)
 
-    criterion = nn.CrossEntropyLoss().cuda(args.gpu)
+    criterion = nn.CrossEntropyLoss().to(device=args.device)
     optimizer = torch.optim.SGD(model.parameters(), args.lr,
                                 momentum=args.momentum,
                                 weight_decay=args.weight_decay)
@@ -123,11 +122,13 @@ def main():
     train_dataset = datasets.ImageFolder(
         train_dir,
         transforms.Compose([
-            transforms.RandomResizedCrop(224),
+            transforms.RandomResizedCrop(args.input_size),
             transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
-        ]))
+        ]),
+        loader=pil_loader,
+    )
     sample_imagefolder(train_dataset, args.train_limit)
 
     train_loader = DataLoader(
@@ -140,11 +141,13 @@ def main():
 
     valid_dataset = datasets.ImageFolder(
         valid_dir, transforms.Compose([
-            transforms.Resize(256),
-            transforms.CenterCrop(224),
+            transforms.Resize(args.predict_size),
+            transforms.CenterCrop(args.input_size),
             transforms.ToTensor(),
             normalize,
-        ]))
+        ]),
+        loader=pil_loader,
+    )
     sample_imagefolder(valid_dataset, args.valid_limit)
 
     valid_loader = DataLoader(
@@ -199,9 +202,8 @@ def train(train_loader: DataLoader, model: nn.Module, criterion, optimizer,
         # measure data loading time
         data_time.update(time.time() - end)
 
-        if args.gpu is not None:
-            input = input.cuda(args.gpu, non_blocking=True)
-        target = target.cuda(args.gpu, non_blocking=True)
+        input = input.to(device=args.device, non_blocking=True)
+        target = target.to(device=args.device, non_blocking=True)
 
         # compute output
         output = model(input)
@@ -247,9 +249,8 @@ def validate(valid_loader, model, criterion, args):
         end = time.time()
         pbar = tqdm.tqdm(valid_loader, desc='Validation')
         for input, target in pbar:
-            if args.gpu is not None:
-                input = input.cuda(args.gpu, non_blocking=True)
-            target = target.cuda(args.gpu, non_blocking=True)
+            input = input.to(device=args.device, non_blocking=True)
+            target = target.to(device=args.device, non_blocking=True)
 
             # compute output
             output = model(input)
@@ -284,6 +285,19 @@ def save_checkpoint(state, is_best, filename='net.pth'):
     torch.save(state, filename)
     if is_best:
         shutil.copyfile(filename, 'net-best.pth')
+
+
+class AvgPool(nn.Module):
+    def forward(self, x):
+        return F.avg_pool2d(x, x.shape[2:])
+
+
+def create_model(arch: str, pretrained=False, num_classes=1000) -> nn.Module:
+    model_cls = models.__dict__[arch]
+    model = model_cls(pretrained=pretrained, num_classes=num_classes)
+    assert hasattr(model, 'avgpool')
+    model.avgpool = AvgPool()
+    return model
 
 
 class AverageMeter(object):
@@ -338,6 +352,15 @@ def sample_imagefolder(dataset: datasets.ImageFolder, limit: int = None):
         dataset.samples = [
             dataset.samples[idx]
             for idx in rng.choice(len(dataset.samples), limit, replace=False)]
+
+
+def pil_loader(path):
+    # open path as file to avoid ResourceWarning
+    # (https://github.com/python-pillow/Pillow/issues/835)
+    with warnings.catch_warnings(), open(path, 'rb') as f:
+        warnings.filterwarnings('ignore', category=UserWarning)
+        img = Image.open(f)
+        return img.convert('RGB')
 
 
 if __name__ == '__main__':
