@@ -40,3 +40,12 @@ so that you don't have to re-build the image too often::
 All runs are recorded into ``./mlruns`` folder, you can use ``./mlflow-ui``
 to monitor them (use ``./mlflow-ui --host 0.0.0.0`` to expose it).
 Note that 5000 port is hardcoded in ``./mlflow-ui``.
+
+
+License
+-------
+
+License is BSD-3.
+
+Initial version of the train script is based on
+https://github.com/pytorch/examples/tree/master/imagenet
