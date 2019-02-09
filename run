@@ -1,0 +1,7 @@
+#!/bin/bash
+
+nvidia-docker run --rm -it \
+    --shm-size 8G \
+    -v `pwd`/data:/data \
+    -v `pwd`/imagenet:/imagenet/imagenet \
+    imagenet python3 ./imagenet/main.py /data $*

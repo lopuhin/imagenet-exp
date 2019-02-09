@@ -7,14 +7,12 @@ from pathlib import Path
 import warnings
 
 import torch
-import torch.nn as nn
-import torch.nn.parallel
-import torch.backends.cudnn as cudnn
+from torch import nn
+from torch.backends import cudnn
 import torch.optim
 from torch.utils.data import DataLoader
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
-import torchvision.models as models
+from torchvision import transforms, datasets, models
+import tqdm
 
 
 def main():
@@ -45,8 +43,6 @@ def main():
     arg('--momentum', default=0.9, type=float, help='momentum')
     arg('--weight-decay', default=1e-4, type=float,
         help='weight decay (default: %(default)s)')
-    arg('--print-freq', default=10, type=int,
-        help='print frequency (default: %(default)s)')
     arg('--resume', default='', type=str,
         help='path to latest checkpoint (default: %(default)s)')
     arg('--evaluate', dest='evaluate', action='store_true',
@@ -146,7 +142,7 @@ def main():
         validate(val_loader, model, criterion, args)
         return
 
-    for epoch in range(args.start_epoch, args.epochs):
+    for epoch in tqdm.trange(args.start_epoch, args.epochs):
         adjust_learning_rate(optimizer, epoch, args)
 
         # train for one epoch
@@ -179,7 +175,8 @@ def train(train_loader: DataLoader, model: nn.Module, criterion, optimizer,
     model.train()
 
     end = time.time()
-    for i, (input, target) in enumerate(train_loader):
+    pbar = tqdm.tqdm(train_loader, desc=f'Epoch {epoch}')
+    for i, (input, target) in enumerate(pbar):
         # measure data loading time
         data_time.update(time.time() - end)
 
@@ -206,14 +203,13 @@ def train(train_loader: DataLoader, model: nn.Module, criterion, optimizer,
         batch_time.update(time.time() - end)
         end = time.time()
 
-        if i % args.print_freq == 0:
-            print(f'Epoch: [{epoch}][{i}/{len(train_loader)}]',
-                  f'Time {batch_time.val:.3f} ({batch_time.avg:.3f})',
-                  f'Data {data_time.val:.3f} ({data_time.avg:.3f})',
-                  f'Loss {losses.val:.4f} ({losses.avg:.4f})',
-                  f'Acc@1 {top1.val:.3f} ({top1.avg:.3f})',
-                  f'Acc@5 {top5.val:.3f} ({top5.avg:.3f})',
-                  sep='\t')
+        pbar.set_postfix({
+            'batch_t': f'{batch_time.avg:.3f}',
+            'data_t': f'{data_time.avg:.3f}',
+            'loss': f'{losses.avg:.4f}',
+            'Acc@1': f'{top1.avg:.3f}',
+            'Acc@5': f'{top5.avg:.3f}',
+        })
 
 
 def validate(val_loader, model, criterion, args):
@@ -226,7 +222,8 @@ def validate(val_loader, model, criterion, args):
 
     with torch.no_grad():
         end = time.time()
-        for i, (input, target) in enumerate(val_loader):
+        pbar = tqdm.tqdm(val_loader, desc='Validation')
+        for i, (input, target) in enumerate(pbar):
             if args.gpu is not None:
                 input = input.cuda(args.gpu, non_blocking=True)
             target = target.cuda(args.gpu, non_blocking=True)
@@ -245,13 +242,12 @@ def validate(val_loader, model, criterion, args):
             batch_time.update(time.time() - end)
             end = time.time()
 
-            if i % args.print_freq == 0:
-                print(f'Test: [{i}/{len(val_loader)}]',
-                      f'Time {batch_time.val:.3f} ({batch_time.avg:.3f})',
-                      f'Loss {losses.val:.4f} ({losses.avg:.4f})',
-                      f'Acc@1 {top1.val:.3f} ({top1.avg:.3f})',
-                      f'Acc@5 {top5.val:.3f} ({top5.avg:.3f})',
-                      sep='\t')
+            pbar.set_postfix({
+                'batch_t': f'{batch_time.avg:.3f}',
+                'loss': f'{losses.avg:.4f}',
+                'Acc@1': f'{top1.avg:.3f}',
+                'Acc@5': f'{top5.avg:.3f}',
+            })
 
         print(f' * Acc@1 {top1.avg:.3f} Acc@5 {top5.avg:.3f}')
 
