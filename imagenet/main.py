@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 import argparse
 import random
 import shutil
@@ -209,7 +210,7 @@ def train(train_loader: DataLoader, model: nn.Module, criterion, optimizer,
             print(f'Epoch: [{epoch}][{i}/{len(train_loader)}]',
                   f'Time {batch_time.val:.3f} ({batch_time.avg:.3f})',
                   f'Data {data_time.val:.3f} ({data_time.avg:.3f})',
-                  f'Loss {loss.val:.4f} ({loss.avg:.4f})',
+                  f'Loss {losses.val:.4f} ({losses.avg:.4f})',
                   f'Acc@1 {top1.val:.3f} ({top1.avg:.3f})',
                   f'Acc@5 {top5.val:.3f} ({top5.avg:.3f})',
                   sep='\t')
@@ -247,7 +248,7 @@ def validate(val_loader, model, criterion, args):
             if i % args.print_freq == 0:
                 print(f'Test: [{i}/{len(val_loader)}]',
                       f'Time {batch_time.val:.3f} ({batch_time.avg:.3f})',
-                      f'Loss {loss.val:.4f} ({loss.avg:.4f})',
+                      f'Loss {losses.val:.4f} ({losses.avg:.4f})',
                       f'Acc@1 {top1.val:.3f} ({top1.avg:.3f})',
                       f'Acc@5 {top5.val:.3f} ({top5.avg:.3f})',
                       sep='\t')
@@ -257,10 +258,10 @@ def validate(val_loader, model, criterion, args):
     return top1.avg
 
 
-def save_checkpoint(state, is_best, filename='checkpoint.pth'):
+def save_checkpoint(state, is_best, filename='net.pth'):
     torch.save(state, filename)
     if is_best:
-        shutil.copyfile(filename, 'model_best.pth')
+        shutil.copyfile(filename, 'net-best.pth')
 
 
 class AverageMeter(object):
