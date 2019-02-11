@@ -6,19 +6,22 @@ import time
 from pathlib import Path
 import warnings
 
+import albumentations as transforms
+from albumentations.pytorch import ToTensor
+import jpeg4py as jpeg
 import mlflow
 import numpy as np
-from PIL import Image
 import torch
 from torch import nn
 from torch.nn import functional as F
 from torch.backends import cudnn
 import torch.optim
 from torch.utils.data import DataLoader
-from torchvision import transforms, datasets, models
+from torchvision import datasets, models
 import tqdm
 
 from imagenet import lr_schedule
+from imagenet.transforms import RandomResizedCrop, wrap_image_transform
 
 
 def main():
@@ -125,13 +128,13 @@ def main():
 
     train_dataset = datasets.ImageFolder(
         train_dir,
-        transforms.Compose([
-            transforms.RandomResizedCrop(args.input_size),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
+        transform=wrap_image_transform(transforms.Compose([
+            RandomResizedCrop(args.input_size),
+            transforms.HorizontalFlip(),
             normalize,
-        ]),
-        loader=pil_loader,
+            ToTensor(),
+        ])),
+        loader=image_loader,
     )
     sample_imagefolder(train_dataset, args.train_limit)
 
@@ -144,13 +147,14 @@ def main():
     )
 
     valid_dataset = datasets.ImageFolder(
-        valid_dir, transforms.Compose([
-            transforms.Resize(args.predict_size),
-            transforms.CenterCrop(args.input_size),
-            transforms.ToTensor(),
+        valid_dir,
+        transform=wrap_image_transform(transforms.Compose([
+            transforms.Resize(args.predict_size, args.predict_size),
+            transforms.CenterCrop(args.input_size, args.input_size),
             normalize,
-        ]),
-        loader=pil_loader,
+            ToTensor(),
+        ])),
+        loader=image_loader,
     )
     sample_imagefolder(valid_dataset, args.valid_limit)
 
@@ -352,13 +356,8 @@ def sample_imagefolder(dataset: datasets.ImageFolder, limit: int = None):
             for idx in rng.choice(len(dataset.samples), limit, replace=False)]
 
 
-def pil_loader(path):
-    # open path as file to avoid ResourceWarning
-    # (https://github.com/python-pillow/Pillow/issues/835)
-    with warnings.catch_warnings(), open(path, 'rb') as f:
-        warnings.filterwarnings('ignore', category=UserWarning)
-        img = Image.open(f)
-        return img.convert('RGB')
+def image_loader(path: str) -> np.ndarray:
+    return jpeg.JPEG(path).decode()
 
 
 if __name__ == '__main__':
