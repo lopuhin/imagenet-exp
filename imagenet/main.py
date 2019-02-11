@@ -18,6 +18,8 @@ from torch.utils.data import DataLoader
 from torchvision import transforms, datasets, models
 import tqdm
 
+from imagenet import lr_schedule
+
 
 def main():
     model_names = sorted(name for name in models.__dict__
@@ -49,6 +51,8 @@ def main():
              'using Data Parallel')
     arg('--lr', default=0.1, type=float,
         help='initial learning rate')
+    arg('--lr-schedule', default='imagenet_schedule',
+        help='schedule for the learning rate (see schedules.py)')
     arg('--momentum', default=0.9, type=float, help='momentum')
     arg('--weight-decay', default=1e-4, type=float,
         help='weight decay (default: %(default)s)')
@@ -161,6 +165,8 @@ def main():
     if args.evaluate:
         validate(valid_loader, model, criterion, args)
         return
+
+    adjust_learning_rate = getattr(lr_schedule, args.lr_schedule)
 
     pbar = tqdm.trange(args.start_epoch, args.epochs)
     for epoch in pbar:
@@ -317,14 +323,6 @@ class AverageMeter(object):
         self.sum += value * n
         self.count += n
         self.avg = self.sum / self.count
-
-
-def adjust_learning_rate(optimizer, epoch, args):
-    """ Sets the learning rate to the initial LR decayed by 10 every 30 epochs.
-    """
-    lr = args.lr * (0.1 ** (epoch // 30))
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = lr
 
 
 def accuracy(output, target, topk=(1,)):
