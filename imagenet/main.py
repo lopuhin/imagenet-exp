@@ -11,6 +11,7 @@ from albumentations.pytorch import ToTensor
 import jpeg4py as jpeg
 import mlflow
 import numpy as np
+from PIL import Image
 import torch
 from torch import nn
 from torch.nn import functional as F
@@ -357,7 +358,22 @@ def sample_imagefolder(dataset: datasets.ImageFolder, limit: int = None):
 
 
 def image_loader(path: str) -> np.ndarray:
-    return jpeg.JPEG(path).decode()
+    try:
+        img = jpeg.JPEG(path).decode()
+    except jpeg.JPEGRuntimeError:
+        # sometimes it fails to read jpegs
+        img = np.array(pil_loader(path))
+    assert img.dtype == np.uint8 and img.shape[2] == 3
+    return img
+
+
+def pil_loader(path: str) -> Image.Image:
+    # open path as file to avoid ResourceWarning
+    # (https://github.com/python-pillow/Pillow/issues/835)
+    with warnings.catch_warnings(), open(path, 'rb') as f:
+        warnings.filterwarnings('ignore', category=UserWarning)
+        img = Image.open(f)
+        return img.convert('RGB')
 
 
 if __name__ == '__main__':
